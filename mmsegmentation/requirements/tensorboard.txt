@@ -1,0 +1,2 @@
+# Optional dependency for configs/massformer/massformer_r50_pv-512x512.py
+tensorboard>=2.14,<3

@@ -154,7 +154,7 @@ class MaSSFormerHead(MMDET_Mask2FormerHead):
         self.out_channels = num_classes
         self.ignore_index = ignore_index
         self.pixel_decoder=FPNbaseline(pixel_decoder=kwargs['pixel_decoder'])
-        self.loss_edge = nn.BCELoss()
+        self.loss_edge = nn.BCEWithLogitsLoss(reduction='none')
 
         feat_channels = kwargs['feat_channels']
         
@@ -588,10 +588,12 @@ class MaSSFormerHead(MMDET_Mask2FormerHead):
         loss_dict = dict()
         edge_out = F.interpolate(edge_out,size=gt_edge.shape[-2:],mode='bilinear',align_corners=False)
 
-        gt_edge = (gt_edge!=255)
-        edge_loss = self.loss_edge(torch.sigmoid(edge_out),gt_edge.float())*10
-        mask = gt_edge!=255
-        edge_loss = (edge_loss*mask).sum()/mask.sum()
+        # Preserve binary edge targets; 255 marks ignored pixels, not edges.
+        # Computing BCE on logits is also safe with mixed precision.
+        mask = gt_edge != self.ignore_index
+        targets = (gt_edge == 1).float()
+        edge_loss = self.loss_edge(edge_out.float(), targets)
+        edge_loss = 10 * (edge_loss * mask).sum() / mask.sum().clamp_min(1)
 
         loss_dict['edge_loss'] = edge_loss
         loss_dict['loss_cls'] = losses_cls[-1]
