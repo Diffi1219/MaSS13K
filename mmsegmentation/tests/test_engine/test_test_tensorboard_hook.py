@@ -20,6 +20,40 @@ from mmseg.structures import SegDataSample
 
 class TestTestTensorboardHook(unittest.TestCase):
 
+    def test_capped_images_keep_all_metrics_and_checkpoint_epoch(self):
+        class Dataset(SimpleNamespace):
+            def __len__(self):
+                return 2
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            image = output / 'tile.tif'
+            cv2.imwrite(str(image), np.zeros((2, 2, 3), dtype=np.uint8))
+            checkpoint = output / 'epoch_8.pth'
+            torch.save(dict(meta=dict(epoch=8)), checkpoint)
+            dataset = Dataset(metainfo=dict(classes=['bg', 'pv'],
+                                            palette=[[0, 0, 0], [255, 255, 255]]),
+                              data_root='root', data_prefix=dict(img_path='test/image'))
+            runner = SimpleNamespace(test_dataloader=SimpleNamespace(dataset=dataset),
+                                     visualizer=Mock(), work_dir=temporary,
+                                     cfg=SimpleNamespace(load_from=str(checkpoint)), logger=Mock())
+            sample = SegDataSample(metainfo=dict(img_path=str(image)))
+            sample.gt_sem_seg = PixelData(data=torch.tensor([[[0, 1], [1, 0]]]))
+            sample.pred_sem_seg = PixelData(data=sample.gt_sem_seg.data.clone())
+            hook = TestTensorboardHook(checkpoint_epoch=None, max_images=1)
+            hook.before_test(runner)
+            hook.after_test_iter(runner, 0, outputs=[sample, sample])
+            hook.after_test_epoch(runner, metrics={'mIoU': 100.0})
+            report = json.loads((output / 'metrics.json').read_text())
+            self.assertEqual(report['images'], 2)
+            self.assertEqual(report['visualized_images'], 1)
+            self.assertEqual(report['epoch'], 8)
+            self.assertEqual(report['confusion_matrix'], [[4, 0], [0, 4]])
+            self.assertEqual(report['per_class']['pv']['IoU'], 100.0)
+            self.assertEqual(runner.visualizer.add_image.call_count, 1)
+            self.assertEqual(len(hook.rows), 2)
+            self.assertFalse(hook.rows[1]['visualized'])
+
     def test_metrics_and_event_images_without_display_png(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)

@@ -42,6 +42,17 @@ class TestCompletionDetection(unittest.TestCase):
         self.assertEqual((result['epoch'], result['iteration_in_epoch'],
                           result['iterations_per_epoch']), (2, 20, 939))
 
+    def test_new_validation_split_and_custom_epoch_count(self):
+        (self.output / 'epoch_8.pth').touch()
+        (self.output / 'console.log').write_text(
+            'Epoch(val) [8][1878/1878] mIoU: 88.0 mDice: 90.0\n')
+        self.assertEqual(watcher.inspect_run(self.output, False, epochs=8)['status'],
+                         'completed')
+        (self.output / 'console.log').write_text(
+            'Epoch(val) [8][100/1878] mIoU: 88.0\n')
+        self.assertEqual(watcher.inspect_run(self.output, False, epochs=8)['status'],
+                         'failed')
+
 
 if __name__ == '__main__':
     unittest.main()

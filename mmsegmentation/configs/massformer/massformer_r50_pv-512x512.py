@@ -1,8 +1,10 @@
 _base_ = ['../_base_/default_runtime.py', '../_base_/datasets/mass13k.py']
 custom_imports = dict(imports='mmdet.models', allow_failed_imports=False)
-# crop_size = (1024,1024)
 crop_size = (512,512)
-data_root = '/home/diffi/workspace/project/datasets/dis/General'
+# Relative to mmsegmentation/. tools/pv.py resolves these on every machine.
+data_root = '../../../../datasets/dis/General'
+env_cfg = dict(mp_cfg=dict(mp_start_method='spawn', opencv_num_threads=0),
+               dist_cfg=dict(backend='gloo'))
 metainfo = dict(
     classes=('bg', 'pv'),
     palette=[
@@ -36,10 +38,9 @@ model = dict(
         norm_cfg=dict(type='BN', requires_grad=False),
         norm_eval=True,
         style='pytorch',
-        # init_cfg=dict(type='Pretrained', checkpoint='/home/notebook/data/personal/S9055029/cache/resnet50-0676ba61.pth')),
         init_cfg=dict(
             type='Pretrained',
-            checkpoint='/home/diffi/.cache/torch/hub/checkpoints/resnet50-11ad3fa6.pth')),
+            checkpoint='torchvision://resnet50')),
         
     decode_head=dict(
         type='MaSSFormerHead',
@@ -177,6 +178,8 @@ test_pipeline = [
 
 train_dataloader = dict(
     batch_size=2,
+    # The decoder has BatchNorm after global pooling: avoid singleton batches.
+    drop_last=True,
     num_workers=2,
     pin_memory=True,
     prefetch_factor=2,
@@ -186,8 +189,8 @@ train_dataloader = dict(
         type='PVDataset',
         data_root=data_root,
         data_prefix=dict(
-            img_path='val/image',
-            seg_map_path='val/label'
+            img_path='train/image',
+            seg_map_path='train/label'
         ),
         img_suffix='.tif',
         seg_map_suffix='.tif',
@@ -205,8 +208,8 @@ val_dataloader = dict(
         test_mode=True,
         data_root=data_root,
         data_prefix=dict(
-            img_path='train_old/image',
-            seg_map_path='train_old/label'
+            img_path='val/image',
+            seg_map_path='val/label'
         ),
         img_suffix='.tif',
         seg_map_suffix='.tif',
@@ -224,8 +227,8 @@ test_dataloader = dict(
         test_mode=True,
         data_root=data_root,
         data_prefix=dict(
-            img_path='train_old/image',
-            seg_map_path='train_old/label'
+            img_path='test/image',
+            seg_map_path='test/label'
         ),
         img_suffix='.tif',
         seg_map_suffix='.tif',
@@ -264,9 +267,9 @@ param_scheduler = [
         by_epoch=True, convert_to_iter_based=True)
 ]
 
-# Intentionally train on General/val and evaluate on General/train_old.
+# General/train trains, General/val validates, General/test tests.
 train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=max_epochs,
-                 val_interval=5)
+                 val_interval=5, dynamic_intervals=[(max_epochs, 1)])
 val_cfg = dict(type='ValLoop', fp16=False)
 test_cfg = dict(type='TestLoop', fp16=False)
 default_hooks = dict(
@@ -282,7 +285,7 @@ val_evaluator = dict(type='IoUMetric', iou_metrics=['mIoU', 'mDice', 'mFscore'],
                      nan_to_num=0)
 test_evaluator = val_evaluator
 log_processor = dict(by_epoch=True)
-vis_backends = [dict(type='LocalVisBackend'), dict(type='TensorboardVisBackend')]
+vis_backends = [dict(type='TensorboardVisBackend')]
 visualizer = dict(type='SegLocalVisualizer', name='visualizer',
                   vis_backends=vis_backends)
 
@@ -290,20 +293,14 @@ visualizer = dict(type='SegLocalVisualizer', name='visualizer',
 # compared at epochs 0 (initial checkpoint), 5, 10, 15, ... .
 fixed_train_dataset = dict(
     type='PVDataset', data_root=data_root,
-    data_prefix=dict(img_path='val/image', seg_map_path='val/label'),
+    data_prefix=dict(img_path='train/image', seg_map_path='train/label'),
     img_suffix='.tif', seg_map_suffix='.tif', test_mode=True,
     pipeline=test_pipeline)
 custom_hooks = [dict(
     type='FixedTrainVisualizationHook', interval=5,
-    dataset=fixed_train_dataset,
-    sample_names=[
-        'F47Mosaic_F47D001008_00000018.tif',
-        'F48Mosaic_F48D001002_00000043.tif',
-        'F48Mosaic_F48D002001_00000057.tif',
-        'F48Mosaic_F48D002003_00000091.tif',
-    ])]
+    dataset=fixed_train_dataset, num_samples=4)]
 randomness = dict(seed=42)
-work_dir = 'work_dirs/massformer_pv_resnet50_50ep'
+work_dir = 'work_dirs/massformer_pv_general_resnet50'
 
 # Default setting for scaling LR automatically
 #   - `enable` means enable scaling LR automatically

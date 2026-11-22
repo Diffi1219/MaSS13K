@@ -1,0 +1,15 @@
+# Python 3.10. Install PyTorch and MMCV first using setup_windows.ps1.
+numpy==1.26.4
+mmengine==0.10.3
+mmdet==3.3.0
+opencv-python==4.11.0.86
+scipy==1.14.1
+matplotlib==3.9.4
+prettytable==3.10.2
+ftfy==6.2.3
+regex==2024.11.6
+tensorboard==2.18.0
+psutil==6.1.1
+tzdata==2024.2
+packaging==24.2
+yapf==0.40.2

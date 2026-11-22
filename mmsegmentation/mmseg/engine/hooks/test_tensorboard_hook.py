@@ -5,6 +5,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 from mmengine.dist import get_world_size
 from mmengine.hooks import Hook
 
@@ -29,15 +30,18 @@ def class_metrics(confusion):
 
 @HOOKS.register_module()
 class TestTensorboardHook(Hook):
-    """Write every test image to TensorBoard, plus JSON/CSV metrics.
+    """Write selected test images to TensorBoard, plus metrics for every image.
 
     This hook is for a single-process test run. The visualizer should contain
     only TensorboardVisBackend, so comparison images live only in event files.
     The existing IoUMetric can separately export raw 0/1 prediction masks.
     """
 
-    def __init__(self, checkpoint_epoch=50):
+    def __init__(self, checkpoint_epoch=50, max_images=None):
         self.checkpoint_epoch = checkpoint_epoch
+        if max_images is not None and max_images < 0:
+            raise ValueError('max_images must be nonnegative or None')
+        self.max_images = max_images
 
     def before_test(self, runner):
         if get_world_size() != 1:
@@ -48,6 +52,17 @@ class TestTensorboardHook(Hook):
         self.confusion = np.zeros((len(self.classes), len(self.classes)),
                                   dtype=np.int64)
         self.rows = []
+        self.image_count = 0
+        if self.checkpoint_epoch is None:
+            checkpoint = torch.load(runner.cfg.load_from, map_location='cpu')
+            self.checkpoint_epoch = int(checkpoint.get('meta', {}).get('epoch', 0))
+            del checkpoint
+        if self.max_images is None:
+            self.selected = None
+        else:
+            total = len(runner.test_dataloader.dataset)
+            self.selected = set(np.linspace(1, total, min(total, self.max_images),
+                                            dtype=int).tolist())
 
     @staticmethod
     def comparison(image, gt, pred, palette):
@@ -88,14 +103,18 @@ class TestTensorboardHook(Hook):
             index = len(self.rows) + 1
             name = Path(sample.img_path).stem
             tag = f'test_images/{index:04d}__{name}'
+            selected = self.selected is None or index in self.selected
             row = dict(sample_index=index, filename=Path(sample.img_path).name,
                        image_path=sample.img_path,
-                       label_path=sample.get('seg_map_path', ''), tensorboard_tag=tag)
+                       label_path=sample.get('seg_map_path', ''),
+                       tensorboard_tag=tag if selected else '', visualized=selected)
             for metric in ['IoU', 'Dice', 'Precision', 'Recall']:
                 row[f'pv_{metric}'] = round(float(values[metric][1]), 4)
                 runner.visualizer.add_scalar(
                     f'test_samples/pv_{metric}', row[f'pv_{metric}'], step=index)
             self.rows.append(row)
+            if not selected:
+                continue
             image = cv2.imread(sample.img_path)
             if image is None:
                 raise FileNotFoundError(sample.img_path)
@@ -103,6 +122,7 @@ class TestTensorboardHook(Hook):
             runner.visualizer.add_image(
                 tag, self.comparison(image, gt, pred, self.palette),
                 step=self.checkpoint_epoch)
+            self.image_count += 1
 
     def after_test_epoch(self, runner, metrics=None):
         values = class_metrics(self.confusion)
@@ -123,15 +143,14 @@ class TestTensorboardHook(Hook):
         report = dict(checkpoint=runner.cfg.load_from, epoch=self.checkpoint_epoch,
                       dataset=runner.test_dataloader.dataset.data_root,
                       data_prefix=runner.test_dataloader.dataset.data_prefix,
-                      images=len(self.rows), metrics_unit='percent', overall=overall,
+                      images=len(self.rows), visualized_images=self.image_count,
+                      metrics_unit='percent', overall=overall,
                       per_class=per_class, confusion_matrix=self.confusion.tolist(),
                       confusion_matrix_axes=['ground_truth', 'prediction'],
                       display_image_storage='TensorBoard event files only',
                       tensorboard_tags='test_images/<sample index>__<filename>')
         (output / 'metrics.json').write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-        (output / 'image_manifest.json').write_text(
-            json.dumps(self.rows, ensure_ascii=False, indent=2), encoding='utf-8')
         with (output / 'per_image_metrics.csv').open('w', newline='',
                                                     encoding='utf-8') as stream:
             if self.rows:

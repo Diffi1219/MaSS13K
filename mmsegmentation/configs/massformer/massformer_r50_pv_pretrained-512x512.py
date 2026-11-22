@@ -5,9 +5,9 @@ model = dict(backbone=dict(init_cfg=None))
 # MMEngine loads all shape-compatible tensors; the 7-class classifier has
 # incompatible weight/bias shapes and keeps its fresh 2-class initialization.
 # This is fine-tuning: do not resume the source optimizer, schedule or epoch.
-load_from = '/home/diffi/workspace/project/weights/cv/MaSS13K/iter_80000.pth'
+load_from = '../../../../weights/cv/MaSS13K/iter_80000.pth'
 resume = False
-work_dir = 'work_dirs/massformer_pv_pretrained_50ep'
+work_dir = 'work_dirs/massformer_pv_general_pretrained'
 
 # Keep a recoverable full checkpoint every epoch; image logging and evaluation
 # retain their five-epoch intervals from the shared configuration.

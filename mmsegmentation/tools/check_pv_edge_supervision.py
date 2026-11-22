@@ -16,13 +16,18 @@ from mmseg.utils import register_all_modules
 
 
 def audit_masks(cfg, output_dir):
-    root = Path(cfg.data_root) / 'val'
+    root = Path(cfg.train_dataloader.dataset.data_root)
+    image_dir = root / cfg.train_dataloader.dataset.data_prefix.img_path
+    label_dir = root / cfg.train_dataloader.dataset.data_prefix.seg_map_path
     generator = GenerateEdge(edge_width=2)
     rows = []
-    selected = set(cfg.custom_hooks[0].sample_names)
+    labels = sorted(label_dir.glob('*.tif'))
+    selected = set(cfg.custom_hooks[0].get('sample_names') or [
+        labels[i].name for i in np.linspace(0, len(labels)-1,
+                                            min(4, len(labels)), dtype=int)])
     kernel = np.ones((3, 3), dtype=np.uint8)
     writer = SummaryWriter(str(output_dir / 'vis_data'))
-    for path in sorted((root / 'label').glob('*.tif')):
+    for path in labels:
         mask = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         assert mask.shape == (512, 512), str(path)
         mask_values = set(np.unique(mask))
@@ -47,14 +52,15 @@ def audit_masks(cfg, output_dir):
         far_edges = int(np.count_nonzero((edge == 1) & ~band))
         interior_edges = int(np.count_nonzero((edge == 1) & interior))
         assert far_edges == 0 and interior_edges == 0, str(path)
-        assert not np.array_equal(edge, mask), str(path)
+        if len(mask_values) == 2:
+            assert not np.array_equal(edge, mask), str(path)
         rows.append(dict(name=path.name, edge_pixels=int(edge.sum()),
                          pv_pixels=int(mask.sum()),
                          has_boundary=len(edge_values) == 2,
                          far_edge_pixels=far_edges,
                          interior_edge_pixels=interior_edges))
         if path.name in selected:
-            image = cv2.imread(str(root / 'image' / path.name))
+            image = cv2.imread(str(image_dir / path.name))
             overlay = image.copy()
             overlay[edge == 1] = (0, 0, 255)
             panels = [image, np.repeat((mask * 255)[..., None], 3, axis=2),
@@ -104,9 +110,9 @@ def audit_model(config_path, output_dir, steps):
     def check_edge_shapes(module, inputs):
         logits, targets = inputs
         assert logits.shape == targets.shape
-        assert tuple(targets.shape) == (2, 1, 512, 512)
+        assert tuple(targets.shape) == (cfg.train_dataloader.batch_size, 1, *cfg.crop_size)
         assert logits.dtype == torch.float32
-        assert set(targets.unique().tolist()) == {0.0, 1.0}
+        assert set(targets.unique().tolist()) <= {0.0, 1.0}
         model_checks.append(dict(aligned_logits=list(logits.shape),
                                  edge_target=list(targets.shape)))
 

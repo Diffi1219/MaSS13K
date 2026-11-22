@@ -20,7 +20,7 @@ class FixedTrainVisualizationHook(Hook):
 
     ``dataset`` must use the training image/label paths with a deterministic
     inference pipeline (no random augmentation). ``sample_names`` contains
-    exact image filenames. If omitted, use the first ``num_samples`` filenames
+    exact image filenames. If omitted, evenly sample ``num_samples`` filenames
     in sorted order. Image steps are completed epochs, scalar training steps
     from the standard LoggerHook remain iterations.
     """
@@ -47,8 +47,11 @@ class FixedTrainVisualizationHook(Hook):
             if name in by_name:
                 raise ValueError(f'Ambiguous fixed sample filename: {name}')
             by_name[name] = index
+        sorted_names = sorted(by_name)
+        positions = np.linspace(0, max(0, len(sorted_names) - 1),
+                                min(self.num_samples, len(sorted_names)), dtype=int)
         names = (list(self.sample_names) if self.sample_names is not None
-                 else sorted(by_name)[:self.num_samples])
+                 else [sorted_names[i] for i in positions])
         if not names or len(names) != len(set(names)):
             raise ValueError('Fixed sample filenames must be nonempty and unique')
         missing = set(names) - set(by_name)

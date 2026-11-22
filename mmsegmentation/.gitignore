@@ -118,3 +118,6 @@ mmseg/.mim
 
 # Pytorch
 *.pth
+
+# Machine-specific PV settings (use pv_settings.example.json as a template).
+pv_settings.local.json
