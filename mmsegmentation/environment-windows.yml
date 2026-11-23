@@ -1,0 +1,14 @@
+name: massformer
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu118
+      - --find-links https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html
+      - --only-binary=mmcv
+      - torch==2.0.1+cu118
+      - torchvision==0.15.2+cu118
+      - -r requirements/windows-solar.txt
+      - -e .

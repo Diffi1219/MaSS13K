@@ -2,9 +2,18 @@
 import argparse
 import os
 import os.path as osp
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+os.environ.setdefault('MPLCONFIGDIR', str(ROOT / 'work_dirs/.cache/matplotlib'))
 
 from mmengine.config import Config, DictAction
 from mmengine.runner import Runner
+from mmseg.registry import RUNNERS
+from tools.train import WindowsRunner
+from tools.solar import load_checkpoint, require_cuda, validate_solar_checkpoint
 
 
 # TODO: support fuse_conv_bn, visualization, and format_only
@@ -12,7 +21,8 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description='MMSeg test (and eval) a model')
     parser.add_argument('config', help='train config file path')
-    parser.add_argument('checkpoint', help='checkpoint file')
+    parser.add_argument('checkpoint', nargs='?',
+                        help='override configured test_checkpoint (or load_from)')
     parser.add_argument(
         '--work-dir',
         help=('if specified, the evaluation metric results will be dumped'
@@ -43,7 +53,7 @@ def parse_args():
     parser.add_argument(
         '--launcher',
         choices=['none', 'pytorch', 'slurm', 'mpi'],
-        default='none',
+        default=None,
         help='job launcher')
     parser.add_argument(
         '--tta', action='store_true', help='Test time augmentation')
@@ -79,25 +89,33 @@ def trigger_visualization_hook(cfg, args):
     return cfg
 
 
-def main():
-    args = parse_args()
-
+def load_config(args):
     # load config
     cfg = Config.fromfile(args.config)
-    cfg.launcher = args.launcher
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+    if args.launcher is not None:
+        cfg.launcher = args.launcher
+    cfg.setdefault('launcher', 'none')
 
-    # work_dir is determined in this priority: CLI > segment in file > filename
+    # Priority: explicit CLI > test_work_dir > work_dir > config filename.
     if args.work_dir is not None:
         # update configs according to CLI args if args.work_dir is not None
         cfg.work_dir = args.work_dir
+    elif cfg.get('test_work_dir') is not None:
+        cfg.work_dir = cfg.test_work_dir
     elif cfg.get('work_dir', None) is None:
         # use config filename as default work_dir if cfg.work_dir is None
         cfg.work_dir = osp.join('./work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
 
-    cfg.load_from = args.checkpoint
+    cfg.load_from = (args.checkpoint if args.checkpoint is not None else
+                     cfg.get('test_checkpoint') or cfg.get('load_from'))
+    if not cfg.load_from:
+        raise ValueError('Set test_checkpoint to an actual trained checkpoint in the config, '
+                         'or pass a checkpoint after the config path. load_from is also supported.')
+    # Evaluation must use the selected checkpoint, never auto-resume another run.
+    cfg.resume = False
 
     if args.show or args.show_dir:
         cfg = trigger_visualization_hook(cfg, args)
@@ -111,9 +129,25 @@ def main():
     if args.out is not None:
         cfg.test_evaluator['output_dir'] = args.out
         cfg.test_evaluator['keep_results'] = True
+    return cfg
+
+
+def main():
+    args = parse_args()
+    cfg = load_config(args)
+    if cfg.test_dataloader.dataset.get('type') == 'SolarGeneralDataset':
+        checkpoint, state, count = load_checkpoint(cfg.load_from)
+        validate_solar_checkpoint(checkpoint, count)
+        del checkpoint, state
+    if cfg.launcher == 'none' and cfg.get('device') is not None:
+        require_cuda(cfg.device)
 
     # build the runner from config
-    runner = Runner.from_cfg(cfg)
+    if 'runner_type' not in cfg:
+        runner_class = WindowsRunner if os.name == 'nt' else Runner
+        runner = runner_class.from_cfg(cfg)
+    else:
+        runner = RUNNERS.build(cfg)
 
     # start testing
     runner.test()

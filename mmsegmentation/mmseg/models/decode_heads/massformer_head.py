@@ -146,6 +146,7 @@ class MaSSFormerHead(MMDET_Mask2FormerHead):
                  num_classes,
                  align_corners=False,
                  ignore_index=255,
+                 norm_eval=False,
                  **kwargs):
         super().__init__(**kwargs)
 
@@ -153,12 +154,22 @@ class MaSSFormerHead(MMDET_Mask2FormerHead):
         self.align_corners = align_corners
         self.out_channels = num_classes
         self.ignore_index = ignore_index
+        self.norm_eval = norm_eval
         self.pixel_decoder=FPNbaseline(pixel_decoder=kwargs['pixel_decoder'])
         self.loss_edge = nn.BCELoss()
 
         feat_channels = kwargs['feat_channels']
         
         self.cls_embed = nn.Linear(feat_channels, self.num_classes + 1)
+
+    def train(self, mode=True):
+        super().train(mode)
+        if mode and self.norm_eval:
+            # The global-pooling branch has only one value per channel at B=1.
+            for module in self.modules():
+                if isinstance(module, nn.modules.batchnorm._BatchNorm):
+                    module.eval()
+        return self
 
     def _forward_aux(self,mask_embed,decoder_out,mask_feature):
         decoder_out = self.transformer_decoder.post_norm(decoder_out)
@@ -336,7 +347,6 @@ class MaSSFormerHead(MMDET_Mask2FormerHead):
         else:
             size = batch_img_metas[0]['img_shape']
         # upsample mask
-        size = batch_img_metas[0]['img_shape']
         mask_pred_results = F.interpolate(
             mask_pred_results, size=size, mode='bilinear', align_corners=False)
         cls_score = F.softmax(mask_cls_results, dim=-1)[..., :-1]
@@ -588,10 +598,11 @@ class MaSSFormerHead(MMDET_Mask2FormerHead):
         loss_dict = dict()
         edge_out = F.interpolate(edge_out,size=gt_edge.shape[-2:],mode='bilinear',align_corners=False)
 
-        gt_edge = (gt_edge!=255)
-        edge_loss = self.loss_edge(torch.sigmoid(edge_out),gt_edge.float())*10
-        mask = gt_edge!=255
-        edge_loss = (edge_loss*mask).sum()/mask.sum()
+        valid_edge = gt_edge != 255
+        edge_target = (gt_edge > 0).float()
+        edge_loss = F.binary_cross_entropy_with_logits(
+            edge_out, edge_target, reduction='none')
+        edge_loss = (edge_loss * valid_edge).sum() / valid_edge.sum().clamp_min(1) * 10
 
         loss_dict['edge_loss'] = edge_loss
         loss_dict['loss_cls'] = losses_cls[-1]

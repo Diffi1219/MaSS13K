@@ -1,0 +1,17 @@
+# Install matching torch / torchvision and the official compiled MMCV wheel first.
+setuptools==69.5.1
+wheel
+numpy==1.26.4
+mmengine==0.10.3
+mmcv==2.1.0
+mmdet==3.3.0
+opencv-python==4.10.0.84
+Pillow==10.4.0
+scipy==1.13.1
+matplotlib==3.8.4
+ftfy==6.2.3
+regex
+prettytable
+packaging
+tensorboard==2.14.0
+protobuf==4.25.8
